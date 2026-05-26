@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}策略回测 - 量化交易系统{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>策略回测</h2>
+  <div class="form-row">
+    <div class="form-group">
+      <label>股票代码</label>
+      <input type="text" id="symbol" value="600519" placeholder="如: 600519">
+    </div>
+    <div class="form-group">
+      <label>策略</label>
+      <select id="strategy">
+        <option value="ma_cross">双均线策略</option>
+        <option value="rsi_revert">RSI均值回归</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>快线周期</label>
+      <input type="number" id="fast" value="5" min="2" max="200" style="width:80px">
+    </div>
+    <div class="form-group">
+      <label>慢线周期</label>
+      <input type="number" id="slow" value="20" min="2" max="200" style="width:80px">
+    </div>
+    <div class="form-group">
+      <label>回测天数</label>
+      <input type="number" id="days" value="365" min="30" max="3650" style="width:100px">
+    </div>
+    <button onclick="runBacktest()">开始回测</button>
+  </div>
+  <div id="error" class="error" style="display:none"></div>
+  <div id="loading" class="loading" style="display:none">回测运行中...</div>
+</div>
+
+<div id="results" style="display:none">
+  <div class="card">
+    <h2>绩效指标</h2>
+    <div class="metrics" id="metricsGrid"></div>
+  </div>
+
+  <div class="card">
+    <h2>净值曲线</h2>
+    <div class="chart-container"><canvas id="equityChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>回撤曲线</h2>
+    <div class="chart-container"><canvas id="drawdownChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>交易记录</h2>
+    <div style="max-height:400px;overflow-y:auto">
+      <table>
+        <thead><tr><th>日期</th><th>方向</th><th>价格</th><th>数量</th><th>佣金</th><th>盈亏</th></tr></thead>
+        <tbody id="tradeTable"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let equityChart = null;
+let drawdownChart = null;
+
+async function runBacktest() {
+  document.getElementById('error').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('results').style.display = 'none';
+
+  const params = new URLSearchParams({
+    symbol: document.getElementById('symbol').value,
+    strategy: document.getElementById('strategy').value,
+    fast: document.getElementById('fast').value,
+    slow: document.getElementById('slow').value,
+    days: document.getElementById('days').value,
+  });
+
+  try {
+    const resp = await fetch('/api/backtest/run?' + params);
+    const data = await resp.json();
+    if (data.error) {
+      document.getElementById('error').textContent = data.error;
+      document.getElementById('error').style.display = 'block';
+      return;
+    }
+    renderResults(data);
+  } catch(e) {
+    document.getElementById('error').textContent = '请求失败: ' + e.message;
+    document.getElementById('error').style.display = 'block';
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+  }
+}
+
+function renderResults(data) {
+  document.getElementById('results').style.display = 'block';
+
+  const m = data.metrics;
+  const metricsHtml = [];
+  for (const [k, v] of Object.entries(m)) {
+    const label = {total_return:'总收益(%)',cagr:'年化收益(%)',annual_volatility:'年化波动(%)',sharpe_ratio:'夏普率',max_drawdown:'最大回撤(%)',calmar_ratio:'Calmar',total_trades:'交易次数',win_rate:'胜率(%)',avg_win:'平均盈利',avg_loss:'平均亏损',profit_factor:'盈亏比'}[k] || k;
+    let cls = '';
+    if (k === 'max_drawdown' && parseFloat(v) < -10) cls = 'negative';
+    if ((k === 'total_return' || k === 'cagr') && parseFloat(v) > 0) cls = 'positive';
+    if ((k === 'total_return' || k === 'cagr') && parseFloat(v) < 0) cls = 'negative';
+    metricsHtml.push(`<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${v}</div></div>`);
+  }
+  document.getElementById('metricsGrid').innerHTML = metricsHtml.join('');
+
+  const dates = data.equity_curve.map(d => d.date);
+  const equities = data.equity_curve.map(d => d.equity);
+
+  // 计算回撤
+  let peak = equities[0];
+  const drawdowns = equities.map(v => {
+    if (v > peak) peak = v;
+    return ((v - peak) / peak) * 100;
+  });
+
+  if (equityChart) equityChart.destroy();
+  if (drawdownChart) drawdownChart.destroy();
+
+  equityChart = new Chart(document.getElementById('equityChart'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{ label: '净值', data: equities, borderColor: '#58a6ff', borderWidth: 1.5, pointRadius: 0, fill: true, backgroundColor: 'rgba(88,166,255,0.05)' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8b949e' } } },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
+      }
+    }
+  });
+
+  drawdownChart = new Chart(document.getElementById('drawdownChart'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{ label: '回撤(%)', data: drawdowns, borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0, fill: true, backgroundColor: 'rgba(248,81,73,0.1)' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8b949e' } } },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
+      }
+    }
+  });
+
+  const tradeRows = data.trades.map(t => {
+    const actionClass = t.action === 'buy' ? 'buy' : 'sell';
+    return `<tr><td>${t.date}</td><td class="${actionClass}">${t.action==='buy'?'买入':'卖出'}</td><td>${t.price}</td><td>${t.size}</td><td>${t.commission}</td><td>${t.pnl}</td></tr>`;
+  });
+  document.getElementById('tradeTable').innerHTML = tradeRows.join('');
+}
+</script>
+{% endblock %}

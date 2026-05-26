@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}仪表盘 - 量化交易系统{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>账户概览</h2>
+  <p style="color:#8b949e;margin-bottom:16px;">模拟账户 · 初始资金 ¥100,000</p>
+  <div class="metrics" id="accountMetrics">
+    <div class="metric"><div class="label">总资产</div><div class="value">¥100,000</div></div>
+    <div class="metric"><div class="label">持仓市值</div><div class="value">¥0</div></div>
+    <div class="metric"><div class="label">可用资金</div><div class="value">¥100,000</div></div>
+    <div class="metric"><div class="label">总收益</div><div class="value">0%</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>行情数据预览 — 贵州茅台 (600519)</h2>
+  <div class="chart-container"><canvas id="priceChart"></canvas></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async () => {
+  const resp = await fetch('/api/equity?symbol=600519&days=365');
+  const data = await resp.json();
+  const dates = data.map(d => d.date);
+  const closes = data.map(d => d.close);
+  new Chart(document.getElementById('priceChart'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{ label: '收盘价', data: closes, borderColor: '#58a6ff', borderWidth: 1.5, pointRadius: 0, fill: false }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8b949e' } } },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}
